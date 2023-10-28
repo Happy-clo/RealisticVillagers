@@ -8,6 +8,7 @@ import me.matsubara.realisticvillagers.data.InteractionTargetType;
 import me.matsubara.realisticvillagers.entity.IVillagerNPC;
 import me.matsubara.realisticvillagers.manager.gift.GiftCategory;
 import me.matsubara.realisticvillagers.util.PluginUtils;
+import org.apache.commons.lang3.RandomUtils;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
@@ -17,7 +18,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.UnaryOperator;
 
 public final class Messages {
@@ -85,9 +85,8 @@ public final class Messages {
     }
 
     private String getRandomMessage(String path) {
-        ThreadLocalRandom random = ThreadLocalRandom.current();
         List<String> messages = getMessages(path);
-        return messages.isEmpty() ? "" : messages.get(random.nextInt(messages.size()));
+        return messages.isEmpty() ? "" : messages.get(RandomUtils.nextInt(0, messages.size()));
     }
 
     @SuppressWarnings("unchecked")
@@ -125,7 +124,6 @@ public final class Messages {
 
     public enum Message {
         ON_HIT("reaction.on-hit"),
-        RAN_AWAY("reaction.ran-away"),
         MARRRY_SUCCESS("marry.success"),
         MARRY_FAIL_MARRIED_TO_GIVER("marry.fail.married-to-giver"),
         MARRY_FAIL_MARRIED_TO_OTHER("marry.fail.married-to-other"),

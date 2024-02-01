@@ -26,6 +26,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.potion.PotionType;
 import org.bukkit.util.Vector;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
@@ -44,6 +45,7 @@ import java.nio.file.Path;
 import java.text.SimpleDateFormat;
 import java.util.List;
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
@@ -275,6 +277,27 @@ public final class PluginUtils {
         return getOrNull(clazz, name);
     }
 
+    public static @Nullable PotionType getValidPotionType(@NotNull String name) {
+        if (name.equalsIgnoreCase("$RANDOM")) {
+            PotionType type;
+            do {
+                type = getRandomFromEnum(PotionType.class);
+            } while (isInvalidPotionType(type));
+            return type;
+        }
+
+        PotionType type = getOrNull(PotionType.class, name);
+        return isInvalidPotionType(type) ? null : type;
+    }
+
+    @SuppressWarnings("deprecation")
+    private static boolean isInvalidPotionType(PotionType type) {
+        return type == null
+                || type.name().startsWith("LONG_")
+                || type.name().startsWith("STRONG_")
+                || type.getEffectType() == null;
+    }
+
     public static <T extends Enum<T>> T getOrNull(Class<T> clazz, String name) {
         return getOrDefault(clazz, name, null);
     }
@@ -459,5 +482,9 @@ public final class PluginUtils {
 
         PersistentDataContainer container = meta.getPersistentDataContainer();
         return container.has(key, PersistentDataType.INTEGER);
+    }
+
+    public static @NotNull String getRandomSex() {
+        return ThreadLocalRandom.current().nextBoolean() ? "male" : "female";
     }
 }

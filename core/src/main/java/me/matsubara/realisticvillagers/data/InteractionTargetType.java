@@ -5,7 +5,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.UUID;
+import java.util.Locale;
 
 public enum InteractionTargetType {
     ADULT,
@@ -14,13 +14,12 @@ public enum InteractionTargetType {
     PARTNER;
 
     public @NotNull String getName() {
-        return name().toLowerCase().replace("_", "-");
+        return name().toLowerCase(Locale.ROOT).replace("_", "-");
     }
 
     public static InteractionTargetType getInteractionTarget(@NotNull IVillagerNPC npc, @NotNull Player player) {
-        UUID playerUUID = player.getUniqueId();
-        if (npc.isPartner(playerUUID)) return PARTNER;
-        else if (npc.getFather() != null && playerUUID.equals(npc.getFather().getUniqueId())) return CHILD_OFFSPRING;
+        if (npc.isPartner(player)) return PARTNER;
+        else if (npc.isFather(player)) return CHILD_OFFSPRING;
         else if (!(npc.bukkit() instanceof Villager villager) || villager.isAdult()) return ADULT;
         return CHILD;
     }

@@ -10,6 +10,7 @@ import me.matsubara.realisticvillagers.entity.IVillagerNPC;
 import me.matsubara.realisticvillagers.manager.gift.GiftCategory;
 import me.matsubara.realisticvillagers.tracker.VillagerTracker;
 import me.matsubara.realisticvillagers.util.PluginUtils;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.RandomUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
@@ -21,11 +22,11 @@ import org.bukkit.entity.Villager;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
 public final class Messages {
@@ -83,11 +84,14 @@ public final class Messages {
         for (Entity nearby : npc.bukkit().getNearbyEntities(NEARBY_SEARCH_RANGE, NEARBY_SEARCH_RANGE, NEARBY_SEARCH_RANGE)) {
             if (exceptPlayer == null) {
                 // If villager is valid, then the optional won't be empty.
-                if (nearby instanceof Villager villager
-                        && !tracker.isInvalid(villager)) return plugin.getConverter()
+                if (!(nearby instanceof Villager villager) || tracker.isInvalid(villager)) continue;
+
+                String name = plugin.getConverter()
                         .getNPC(villager)
                         .get()
                         .getVillagerName();
+
+                return Objects.requireNonNullElse(name, Config.UNKNOWN.asStringTranslated());
             } else if (nearby instanceof Player player
                     && !player.getName().equals(exceptPlayer)) return player.getName();
         }
@@ -95,12 +99,13 @@ public final class Messages {
         ThreadLocalRandom random = ThreadLocalRandom.current();
 
         if (exceptPlayer != null) {
-            List<String> offlineNames = Arrays.stream(Bukkit.getOfflinePlayers())
-                    .map(OfflinePlayer::getName)
-                    .filter(Predicate.not(exceptPlayer::equals))
-                    .toList();
             // If there isn't any offline player (shouldn't happen), a random villager name will be used.
-            if (!offlineNames.isEmpty()) return offlineNames.get(random.nextInt(offlineNames.size()));
+            OfflinePlayer[] offlines = Bukkit.getOfflinePlayers();
+            OfflinePlayer offline = ArrayUtils.get(offlines, random.nextInt(Math.max(1, offlines.length)));
+            String name;
+            if (offline != null && (name = offline.getName()) != null && !name.equals(exceptPlayer)) {
+                return name;
+            }
         }
 
         // If there isn't any villager nearby, we pick a random name.
@@ -112,7 +117,7 @@ public final class Messages {
     }
 
     public void send(CommandSender sender, @NotNull Message message, @Nullable UnaryOperator<String> operator) {
-        // Only villager messages are single line, other are multi.
+        // Only villager messages are single line.
         for (String line : getMessages(message.getPath())) {
             if (!line.isEmpty()) sender.sendMessage(operator != null ? operator.apply(line) : line);
         }
@@ -175,6 +180,7 @@ public final class Messages {
 
     @Getter
     public enum Message {
+        ANNOYED,
         ON_HIT("reaction.on-hit"),
         MARRRY_SUCCESS("marry.success"),
         MARRY_FAIL_MARRIED_TO_GIVER("marry.fail.married-to-giver"),
@@ -220,6 +226,7 @@ public final class Messages {
         INTERACT_FAIL_ALREADY_ALIVE("interact-fail.already-alive"),
         GIFT_EXPECTING("gift.expecting"),
         GIFT_EXPECTING_FAIL("gift.expecting-fail"),
+        RIGHT_CLICK_GIFT,
         THROW_GIFT,
         SELECT_BED,
         RELOADING,
@@ -270,7 +277,7 @@ public final class Messages {
         private final String path;
 
         Message() {
-            this.path = name().toLowerCase().replace("_", "-");
+            this.path = name().toLowerCase(Locale.ROOT).replace("_", "-");
         }
 
         Message(String path) {

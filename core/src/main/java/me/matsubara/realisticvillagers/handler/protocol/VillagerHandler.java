@@ -10,6 +10,7 @@ import com.github.retrooper.packetevents.manager.server.ServerVersion;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
+import com.github.retrooper.packetevents.wrapper.PacketWrapper;
 import com.github.retrooper.packetevents.wrapper.play.server.*;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
@@ -19,13 +20,16 @@ import lombok.Getter;
 import me.matsubara.realisticvillagers.RealisticVillagers;
 import me.matsubara.realisticvillagers.entity.IVillagerNPC;
 import me.matsubara.realisticvillagers.handler.npc.NPCHandler;
+import me.matsubara.realisticvillagers.nms.INMSConverter;
 import me.matsubara.realisticvillagers.npc.NPC;
 import org.bukkit.Location;
+import org.bukkit.Particle;
 import org.bukkit.Raid;
 import org.bukkit.World;
 import org.bukkit.entity.*;
 import org.bukkit.util.BoundingBox;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 import java.util.Optional;
@@ -46,25 +50,41 @@ public class VillagerHandler extends SimplePacketListenerAbstract {
     ID = 16 | ACCESSOR ID = 16 | VALUE TYPE = Boolean | CLAZZ = BOOLEAN (AGEABLE MOB) Is baby
     ID = 17 | ACCESSOR ID = 17 | VALUE TYPE = Integer | CLAZZ = INT (ABSTRACT VILLAGER) | Head shake timer
     ID = 18 | ACCESSOR ID = 18 | VALUE TYPE = VillagerData | CLAZZ = VILLAGER_DATA (VILLAGER) | Villager Data
-    PLAYER METADATA
+    PLAYER METADATA (LEGACY)
     ID = 15 | ACCESSOR ID = 15 | VALUE TYPE = Float | CLAZZ = FLOAT | Additional Hearts
     ID = 16 | ACCESSOR ID = 16 | VALUE TYPE = Integer | CLAZZ = INT | Score
     ID = 17 | ACCESSOR ID = 17 | VALUE TYPE = Byte | CLAZZ = BYTE | The Displayed Skin Parts bit mask that is sent in Client Settings
     ID = 18 | ACCESSOR ID = 18 | VALUE TYPE = Byte | CLAZZ = BYTE | Main hand (0 : Left, 1 : Right)
     ID = 19 | ACCESSOR ID = 19 | VALUE TYPE = TagCompound | CLAZZ = COMPOUND_TAG | Left shoulder entity data (for occupying parrot)
     ID = 20 | ACCESSOR ID = 20 | VALUE TYPE = TagCompound | CLAZZ = COMPOUND_TAG | Right shoulder entity data (for occupying parrot)
+    PLAYER METADATA (>=MODERN 1.21.9) = [15 - 18 changed]
+    ID = 15 | ACCESSOR ID = 15 | VALUE TYPE = Byte | CLAZZ = BYTE | Main hand (0 : Left, 1 : Right)
+    ID = 16 | ACCESSOR ID = 16 | VALUE TYPE = Byte | CLAZZ = BYTE | The Displayed Skin Parts bit mask that is sent in Client Settings
+    ID = 17 | ACCESSOR ID = 17 | VALUE TYPE = Float | CLAZZ = FLOAT | Additional Hearts
+    ID = 18 | ACCESSOR ID = 18 | VALUE TYPE = Integer | CLAZZ = INT | Score
+    ID = 19 | ACCESSOR ID = 19 | VALUE TYPE = Optional | CLAZZ = OPTIONAL | Left shoulder entity data (for occupying parrot)
+    ID = 20 | ACCESSOR ID = 20 | VALUE TYPE = Optional | CLAZZ = OPTIONAL | Right shoulder entity data (for occupying parrot)
     */
-    private static final Predicate<EntityData> REMOVE_METADATA = data -> {
+    private static final Predicate<EntityData<?>> REMOVE_METADATA = data -> {
         // Data between 0-14 is the same for players and villagers.
         int index = data.getIndex();
         if (index <= 14) return false;
 
-        // 15 & 16 is unnecessary.
-        if (index == 15 || index == 16) return true;
+        // 15 is unnecessary.
+        if (index == 15) return true;
 
-        // 17: Keep skin state (over head shake timer).
-        if (index == 17 && data.getType() != EntityDataTypes.BYTE) return true;
+        // Some changes were made from this version onwards.
+        boolean modern = XReflection.supports(21, 9);
 
+        // Unnecessary.
+        int unnecessary = modern ? 17 : 16;
+        if (index == unnecessary) return true;
+
+        // Keep skin state (over [is baby / head shake timer]).
+        int skin = modern ? 16 : 17;
+        if (index == skin && data.getType() != EntityDataTypes.BYTE) return true;
+
+        // 18, ignore villager data (to prevent crashes).
         // 19 & 20 only exists for players, they shouldn't collide with anything.
         return data.getType() == EntityDataTypes.VILLAGER_DATA;
     };
@@ -86,7 +106,8 @@ public class VillagerHandler extends SimplePacketListenerAbstract {
                         PacketType.Play.Server.SPAWN_ENTITY,
                         PacketType.Play.Server.SPAWN_LIVING_ENTITY,
                         PacketType.Play.Server.ENTITY_STATUS,
-                        PacketType.Play.Server.ENTITY_METADATA)
+                        PacketType.Play.Server.ENTITY_METADATA,
+                        PacketType.Play.Server.DESTROY_ENTITIES)
                 .build()
                 .stream()
                 .map(object -> (PacketType.Play.Server) object)
@@ -100,23 +121,40 @@ public class VillagerHandler extends SimplePacketListenerAbstract {
                 || !listenTo.contains(event.getPacketType())
                 || !(event.getPlayer() instanceof Player player)) return;
 
+        PacketType.Play.Server type = event.getPacketType();
+        boolean isMetadata = type == PacketType.Play.Server.ENTITY_METADATA;
+
         World world;
-        try {
-            world = player.getWorld();
-        } catch (UnsupportedOperationException exception) {
-            // Should "fix" → UnsupportedOperationException: The method getWorld is not supported for temporary players.
-            return;
-        }
-
-        int id = getEntityIdFromPacket(event);
-
+        PacketWrapper<?> metadataWrapper;
+        int id;
         Entity entity;
         try {
+            world = player.getWorld();
+            if (isMetadata) {
+                metadataWrapper = new PacketWrapper<>(event, false);
+                id = metadataWrapper.readVarInt();
+            } else {
+                metadataWrapper = null;
+                id = getEntityIdFromPacket(event);
+            }
             entity = id != -1 ? SpigotReflectionUtil.getEntityById(world, id) : null;
-        } catch (Exception exception) {
-            // Should "fix" -> java.lang.NullPointerException: null
+        } catch (Throwable ignored) {
+            // Should "fix" → UnsupportedOperationException: The method getWorld is not supported for temporary players.
+            // Should "fix" → IOException: Unknown nbt type id X.
+            // Should "fix" → NullPointerException: null (entity)
+            if (isMetadata) event.setCancelled(true);
             return;
         }
+
+        if (type == PacketType.Play.Server.DESTROY_ENTITIES) {
+            // NPC is removed? then remove the nametag too.
+            WrapperPlayServerDestroyEntities destroy = new WrapperPlayServerDestroyEntities(event);
+            for (int entityId : destroy.getEntityIds()) {
+                plugin.getTracker().getNPC(entityId).ifPresent(npc -> npc.hideNametags(player));
+            }
+            return;
+        }
+
         if (!(entity instanceof AbstractVillager villager) || plugin.getTracker().isInvalid(villager)) return;
 
         UUID uuid = entity.getUniqueId();
@@ -132,27 +170,35 @@ public class VillagerHandler extends SimplePacketListenerAbstract {
             return;
         }
 
-        PacketType.Play.Server type = event.getPacketType();
+        INMSConverter converter = plugin.getConverter();
+
         if (type == PacketType.Play.Server.ENTITY_STATUS && EntityType.VILLAGER == villager.getType()) {
             WrapperPlayServerEntityStatus status = new WrapperPlayServerEntityStatus(event);
-            plugin.getConverter().getNPC(villager).ifPresent(temp -> handleStatus(temp, (byte) status.getStatus()));
+            converter.getNPC(villager).ifPresent(temp -> handleStatus(temp, (byte) status.getStatus()));
+            return;
         }
 
-        if (type == PacketType.Play.Server.ENTITY_METADATA) {
+        if (isMetadata) {
             // Cancel metadata packets for players using 1.7 (or lower).
             if (plugin.getCompatibilityManager().shouldCancelMetadata(player)) {
                 event.setCancelled(true);
+                return;
             }
 
+            // Fix issues with ViaVersion.
             ServerVersion version = PacketEvents.getAPI().getServerManager().getVersion();
-            if (version.isNewerThanOrEquals(ServerVersion.V_1_20_4)) {
-                // Fix issues with ViaVersion.
-                WrapperPlayServerEntityMetadata wrapper = new WrapperPlayServerEntityMetadata(event);
+            if (!version.isNewerThanOrEquals(ServerVersion.V_1_20_4)) return;
 
-                List<EntityData> metadata = wrapper.getEntityMetadata();
-                metadata.removeIf(REMOVE_METADATA);
+            try {
+                List<EntityData<?>> metadata = metadataWrapper.readEntityMetadata();
+                if (!metadata.removeIf(REMOVE_METADATA)) return;
 
-                wrapper.setEntityMetadata(metadata);
+                event.setCancelled(true);
+
+                // Cancel the packet and send a new one.
+                WrapperPlayServerEntityMetadata wrapper = new WrapperPlayServerEntityMetadata(id, metadata);
+                Object channel = SpigotReflectionUtil.getChannel(player);
+                PacketEvents.getAPI().getProtocolManager().sendPacket(channel, wrapper);
 
                 // Adapt villager scale using the new scale attribute.
                 // This was added to 1.20.5, but that version was quickly replaced by 1.20.6.
@@ -161,17 +207,22 @@ public class VillagerHandler extends SimplePacketListenerAbstract {
                         && npc.get().getSpawnCustomizer() instanceof NPCHandler handler) {
                     handler.adaptScale(player, npc.get());
                 }
+            } catch (Exception ignored) {
+                event.setCancelled(true);
+                return;
             }
+
+            return;
         }
 
-        if (npc.isEmpty()) return;
+        if (npc.isEmpty() || !MOVEMENT_PACKETS.contains(type)) return;
 
         // Don't modify location while reviving.
-        if (plugin.getConverter().getNPC(villager)
+        if (converter.getNPC(villager)
                 .map(IVillagerNPC::isReviving)
                 .orElse(false)) return;
 
-        if (MOVEMENT_PACKETS.contains(type)) rotateBody(event, villager);
+        rotateBody(event, villager);
     }
 
     private int getEntityIdFromPacket(@NotNull PacketPlaySendEvent event) {
@@ -184,9 +235,6 @@ public class VillagerHandler extends SimplePacketListenerAbstract {
             return wrapper.getEntityId();
         } else if (type == PacketType.Play.Server.ENTITY_STATUS) {
             WrapperPlayServerEntityStatus wrapper = new WrapperPlayServerEntityStatus(event);
-            return wrapper.getEntityId();
-        } else if (type == PacketType.Play.Server.ENTITY_METADATA) {
-            WrapperPlayServerEntityMetadata wrapper = new WrapperPlayServerEntityMetadata(event);
             return wrapper.getEntityId();
         } else if (type == PacketType.Play.Server.ENTITY_ROTATION) {
             WrapperPlayServerEntityRotation wrapper = new WrapperPlayServerEntityRotation(event);
@@ -240,17 +288,7 @@ public class VillagerHandler extends SimplePacketListenerAbstract {
     private void handleStatus(@NotNull IVillagerNPC npc, byte status) {
         LivingEntity bukkit = npc.bukkit();
 
-        XParticle particle;
-        switch (status) {
-            case 12 -> particle = XParticle.HEART;
-            case 13 -> particle = XParticle.ANGRY_VILLAGER;
-            case 14 -> particle = XParticle.HAPPY_VILLAGER;
-            case 42 -> {
-                Raid raid = plugin.getConverter().getRaidAt(bukkit.getLocation());
-                particle = raid != null && raid.getStatus() == Raid.RaidStatus.ONGOING ? null : XParticle.SPLASH;
-            }
-            default -> particle = null;
-        }
+        Particle particle = getParticle(status, bukkit);
         if (particle == null) return;
 
         Location location = bukkit.getLocation();
@@ -262,7 +300,7 @@ public class VillagerHandler extends SimplePacketListenerAbstract {
         double z = location.getZ() + box.getWidthZ() * ((2.0d * random.nextDouble() - 1.0d) * 1.05d);
 
         bukkit.getWorld().spawnParticle(
-                particle.get(),
+                particle,
                 x,
                 y,
                 z,
@@ -270,6 +308,22 @@ public class VillagerHandler extends SimplePacketListenerAbstract {
                 random.nextGaussian() * 0.02d,
                 random.nextGaussian() * 0.02d,
                 random.nextGaussian() * 0.02d);
+    }
+
+    private @Nullable Particle getParticle(byte status, LivingEntity bukkit) {
+        XParticle particle = switch (status) {
+            case 12 -> XParticle.HEART;
+            case 13 -> XParticle.ANGRY_VILLAGER;
+            case 14 -> XParticle.HAPPY_VILLAGER;
+            case 42 -> {
+                Raid raid = plugin.getConverter().getRaidAt(bukkit.getLocation());
+                yield raid != null && raid.getStatus() == Raid.RaidStatus.ONGOING ? null : XParticle.SPLASH;
+            }
+            default -> null;
+        };
+        return Optional.ofNullable(particle)
+                .map(XParticle::get)
+                .orElse(null);
     }
 
     private boolean isCancellableSpawnPacket(@NotNull PacketPlaySendEvent event) {

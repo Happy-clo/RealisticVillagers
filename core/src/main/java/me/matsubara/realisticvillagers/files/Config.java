@@ -35,8 +35,13 @@ public enum Config {
     ARROW_STATUS("arrow-status"),
 
     CUSTOM_NAME_SHOW_JOB_BLOCK("custom-nametags.show-job-block"),
+    CUSTOM_NAME_SHADOW("custom-nametags.shadow"),
+    CUSTOM_NAME_SEE_THROUGH("custom-nametags.see-through"),
+    CUSTOM_NAME_TEXT_OPACITY("custom-nametags.text-opacity"),
     CUSTOM_NAME_VILLAGER_LINES("custom-nametags.lines.villager"),
     CUSTOM_NAME_TRADER_LINES("custom-nametags.lines.wandering-trader"),
+    CUSTOM_NAME_PARTNER_COLOR("custom-nametags.relationship-color.partner"),
+    CUSTOM_NAME_CHILDREN_COLOR("custom-nametags.relationship-color.children"),
 
     SKIN_PREVIEW_SECONDS("skin-preview.seconds"),
     SKIN_PREVIEW_MESSAGE("skin-preview.message"),
@@ -50,6 +55,7 @@ public enum Config {
     VILLAGER_SPAWN_IRON_GOLEM("villager-spawn-iron-golem"),
 
     BAD_GIFT_REPUTATION("bad-gift-reputation"),
+    GIFT_MODE("gift-mode"),
     WEDDING_RING_REPUTATION("wedding-ring-reputation"),
     CROSS_REPUTATION("cross-reputation"),
     BABY_REPUTATION("baby-reputation"),
@@ -98,6 +104,14 @@ public enum Config {
 
     REPUTATION_REQUIRED_TO_MARRY("reputation-required-to-marry"),
     REPUTATION_REQUIRED_TO_PROCREATE("reputation-required-to-procreate"),
+
+    ANNOYING_METER_ENABLED("annoying-meter.enabled"),
+    ANNOYING_METER_IGNORE_FAMILY_MEMBERS("annoying-meter.ignore-family-members"),
+    ANNOYING_METER_CLEAR_AFTER_SUCCESS_INTERACTION("annoying-meter.clear-after-success-interaction"),
+    ANNOYING_METER_MAX_CLICKS("annoying-meter.max-clicks"),
+    ANNOYING_METER_TIMEFRAME("annoying-meter.timeframe"),
+    ANNOYING_METER_REPUTATION_LOSS("annoying-meter.reputation-loss"),
+    ANNOYING_METER_ANGRY_PARTICLES("annoying-meter.angry-particles"),
 
     IGNORE_SEX_WHEN_PROCREATING("villager-farm.ignore-sex-when-procreating"),
     ALLOW_PARTNER_CHEATING("villager-farm.allow-partner-cheating"),
@@ -160,6 +174,7 @@ public enum Config {
     FAMILY_BYPASS_ASK_TO_FOLLOW("family-bypass-ask-to-follow"),
     REPUTATION_REQUIRED_TO_ASK_TO_STAY("reputation-required-to-ask-to-stay"),
     FAMILY_BYPASS_ASK_TO_STAY("family-bypass-ask-to-stay"),
+    STAY_STROLL_AROUND("stay-stroll-around"),
     INITIAL_REPUTATION_AT_BIRTH("initial-reputation-at-birth"),
     SPAWN_LOOT_FORCE_EQUIP("spawn-loot.force-equip"),
     VILLAGER_ADOPTS_ABANDONED_PET("villager-adopts-abandoned-pet"),
@@ -179,6 +194,7 @@ public enum Config {
     REVIVE_ONLY_AT_NIGHT("revive.only-at-night"),
     REVIVE_ONLY_WITH_CROSS("revive.only-with-cross"),
     REVIVE_BREAK_EMERALD_CHANCE("revive.break-emerald-chance"),
+    REVIVE_INCLUDE_WANDERING_TRADER("revive.include-wandering-trader"),
     REVIVE_SPAWN_VALUES_HEALTH("revive.spawn-values.health"),
     REVIVE_SPAWN_VALUES_FOOD_LEVEL("revive.spawn-values.food-level"),
     REVIVE_SPAWN_VALUES_POTION_EFFECTS("revive.spawn-values.potion-effects"),

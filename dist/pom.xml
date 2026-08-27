@@ -9,7 +9,7 @@
     <parent>
         <groupId>me.matsubara</groupId>
         <artifactId>realisticvillagers-parent</artifactId>
-        <version>3.3.3.3</version>
+        <version>3.3.6.5</version>
     </parent>
 
     <build>
@@ -64,46 +64,40 @@
             <artifactId>realisticvillagers-core</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
-        <!-- 1_18_R2 -->
+        <!-- v1_18 -->
         <dependency>
             <groupId>me.matsubara</groupId>
-            <artifactId>realisticvillagers-1_18_R2</artifactId>
+            <artifactId>realisticvillagers-v1_18</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
-        <!-- 1_19_R3 -->
+        <!-- v1_19 -->
         <dependency>
             <groupId>me.matsubara</groupId>
-            <artifactId>realisticvillagers-1_19_R3</artifactId>
+            <artifactId>realisticvillagers-v1_19</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
-        <!-- 1_20_R1 -->
+        <!-- v1_20_6 -->
         <dependency>
             <groupId>me.matsubara</groupId>
-            <artifactId>realisticvillagers-1_20_R1</artifactId>
+            <artifactId>realisticvillagers-v1_20_6</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
-        <!-- 1_20_R2 -->
+        <!-- v1_21_8 -->
         <dependency>
             <groupId>me.matsubara</groupId>
-            <artifactId>realisticvillagers-1_20_R2</artifactId>
+            <artifactId>realisticvillagers-v1_21_8</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
-        <!-- 1_20_R3 -->
+        <!-- v1_21_10 -->
         <dependency>
             <groupId>me.matsubara</groupId>
-            <artifactId>realisticvillagers-1_20_R3</artifactId>
+            <artifactId>realisticvillagers-v1_21_10</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
-        <!-- 1_20_R4 -->
+        <!-- v1_21_11 -->
         <dependency>
             <groupId>me.matsubara</groupId>
-            <artifactId>realisticvillagers-1_20_R4</artifactId>
-            <version>${project.parent.version}</version>
-        </dependency>
-        <!-- 1_21_R1 -->
-        <dependency>
-            <groupId>me.matsubara</groupId>
-            <artifactId>realisticvillagers-1_21_R1</artifactId>
+            <artifactId>realisticvillagers-v1_21_11</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
     </dependencies>

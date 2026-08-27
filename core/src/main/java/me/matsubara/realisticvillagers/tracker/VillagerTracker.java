@@ -11,9 +11,8 @@ import me.matsubara.realisticvillagers.files.Config;
 import me.matsubara.realisticvillagers.files.Messages;
 import me.matsubara.realisticvillagers.handler.npc.NPCHandler;
 import me.matsubara.realisticvillagers.handler.protocol.VillagerHandler;
-import me.matsubara.realisticvillagers.listener.spawn.BukkitSpawnListeners;
-import me.matsubara.realisticvillagers.listener.spawn.PaperSpawnListeners;
-import me.matsubara.realisticvillagers.manager.NametagManager;
+import me.matsubara.realisticvillagers.listener.platform.BukkitSpawnListeners;
+import me.matsubara.realisticvillagers.listener.platform.PaperListeners;
 import me.matsubara.realisticvillagers.npc.NPC;
 import me.matsubara.realisticvillagers.npc.NPCPool;
 import me.matsubara.realisticvillagers.task.PreviewTask;
@@ -59,8 +58,8 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
-import java.util.List;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
@@ -71,6 +70,7 @@ public final class VillagerTracker implements Listener {
 
     private final RealisticVillagers plugin;
     private final NPCPool pool;
+    private final PaperListeners paperListeners;
     private final BukkitSpawnListeners spawnListeners;
     private final Map<UUID, String> transformations = new HashMap<>();
     private final Map<UUID, Integer> portalTransform = new HashMap<>();
@@ -96,11 +96,10 @@ public final class VillagerTracker implements Listener {
         updateMineskinApiKey();
 
         PluginManager manager = plugin.getServer().getPluginManager();
-
-        PaperSpawnListeners paperListener = new PaperSpawnListeners(plugin);
-        if (!paperListener.isRegistered()) manager.registerEvents(spawnListeners, plugin);
-
         manager.registerEvents(this, plugin);
+        if (!(this.paperListeners = new PaperListeners(plugin)).isSpawnRegistered()) {
+            manager.registerEvents(spawnListeners, plugin);
+        }
 
         PacketEvents.getAPI().getEventManager().registerListener(handler = new VillagerHandler(plugin));
     }
@@ -217,10 +216,6 @@ public final class VillagerTracker implements Listener {
 
         if (entity.getType() == EntityType.VILLAGER && reason == EntityTransformEvent.TransformReason.LIGHTNING) {
             removeNPC(event.getEntity().getEntityId());
-
-            NametagManager nametagManager = plugin.getNametagManager();
-            if (nametagManager != null) plugin.getConverter().getNPC((Villager) entity)
-                    .ifPresent(nametagManager::remove);
             return;
         }
 
@@ -301,17 +296,23 @@ public final class VillagerTracker implements Listener {
         if (!(event.getEntity() instanceof LivingEntity living)) return;
         if (isInvalid(living)) return;
 
-        NametagManager nametagManager = plugin.getNametagManager();
-        if (nametagManager == null) return;
+        IVillagerNPC npc = plugin.getConverter().getNPC(living).orElse(null);
+        if (npc == null) return;
 
-        plugin.getServer().getScheduler().runTask(plugin, () -> plugin.getConverter().getNPC(living).ifPresent(npc -> {
-            EntityPotionEffectEvent.Action action = event.getAction();
-            if (action == EntityPotionEffectEvent.Action.CLEARED || action == EntityPotionEffectEvent.Action.REMOVED) {
-                nametagManager.resetNametag(npc);
-            } else {
-                nametagManager.remove(npc);
+        NPC temp = plugin.getTracker().getNPC(npc.bukkit().getEntityId()).orElse(null);
+        if (temp == null) return;
+
+        EntityPotionEffectEvent.Action action = event.getAction();
+
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            for (Player player : temp.getSeeingPlayers()) {
+                if (action == EntityPotionEffectEvent.Action.CLEARED || action == EntityPotionEffectEvent.Action.REMOVED) {
+                    temp.spawnNametags(player, true);
+                } else {
+                    temp.hideNametags(player);
+                }
             }
-        }));
+        });
     }
 
     @EventHandler
@@ -369,7 +370,7 @@ public final class VillagerTracker implements Listener {
                 || defaultName.equals(HIDE_NAMETAG_NAME)
                 || isInvalidNametag(defaultName)) {
             name = HIDE_NAMETAG_NAME;
-            checkNametagTeam();
+            checkNametagTeam(defaultName);
         } else {
             // Only show nametag if it's valid.
             name = defaultName;
@@ -386,7 +387,7 @@ public final class VillagerTracker implements Listener {
                 .build(pool);
     }
 
-    public void checkNametagTeam() {
+    public void checkNametagTeam(@Nullable String defaultName) {
         ScoreboardManager manager = Bukkit.getScoreboardManager();
         if (manager == null) return;
 
@@ -400,8 +401,10 @@ public final class VillagerTracker implements Listener {
 
         try {
             team.addEntry(HIDE_NAMETAG_NAME);
-        } catch (IllegalStateException ignored) {
+        } catch (IllegalStateException exception) {
             // Nothing we can do, maybe the NPC was added to another team by another plugin?
+            if (defaultName == null) return;
+            plugin.getLogger().warning("It wasn't possible to disable the nametag of the villager {" + defaultName + "}!");
         }
     }
 
@@ -661,7 +664,7 @@ public final class VillagerTracker implements Listener {
     }
 
     public boolean shouldRename(@NotNull String name) {
-        return name.isEmpty() || name.equals(VillagerTracker.HIDE_NAMETAG_NAME);
+        return name.isBlank() || name.equals(VillagerTracker.HIDE_NAMETAG_NAME);
     }
 
     public void refreshNPCSkin(LivingEntity living, boolean happyParticles) {

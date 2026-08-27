@@ -1,58 +1,63 @@
 package me.matsubara.realisticvillagers;
 
-import com.cryptomorin.xseries.reflection.XReflection;
 import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.protocol.player.TextureProperty;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
+import com.jeff_media.morepersistentdatatypes.datatypes.serializable.ConfigurationSerializableDataType;
 import com.tchristofferson.configupdater.ConfigUpdater;
 import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import me.matsubara.realisticvillagers.command.MainCommand;
-import me.matsubara.realisticvillagers.compatibility.CompatibilityManager;
-import me.matsubara.realisticvillagers.compatibility.EMCompatibility;
+import me.matsubara.realisticvillagers.compatibility.*;
 import me.matsubara.realisticvillagers.data.ItemLoot;
+import me.matsubara.realisticvillagers.data.serialization.GossipEntryWrapper;
+import me.matsubara.realisticvillagers.data.serialization.OfflineDataWrapper;
 import me.matsubara.realisticvillagers.entity.IVillagerNPC;
 import me.matsubara.realisticvillagers.files.Config;
 import me.matsubara.realisticvillagers.files.Messages;
 import me.matsubara.realisticvillagers.gui.types.WhistleGUI;
 import me.matsubara.realisticvillagers.listener.*;
+import me.matsubara.realisticvillagers.manager.AnnoyingMeterManager;
 import me.matsubara.realisticvillagers.manager.ChestManager;
 import me.matsubara.realisticvillagers.manager.ExpectingManager;
 import me.matsubara.realisticvillagers.manager.InteractCooldownManager;
-import me.matsubara.realisticvillagers.manager.NametagManager;
 import me.matsubara.realisticvillagers.manager.gift.Gift;
 import me.matsubara.realisticvillagers.manager.gift.GiftCategory;
 import me.matsubara.realisticvillagers.manager.gift.GiftManager;
 import me.matsubara.realisticvillagers.manager.revive.ReviveManager;
 import me.matsubara.realisticvillagers.nms.INMSConverter;
 import me.matsubara.realisticvillagers.tracker.VillagerTracker;
-import me.matsubara.realisticvillagers.util.ItemBuilder;
-import me.matsubara.realisticvillagers.util.ItemStackUtils;
-import me.matsubara.realisticvillagers.util.PluginUtils;
-import me.matsubara.realisticvillagers.util.Shape;
+import me.matsubara.realisticvillagers.util.*;
 import me.matsubara.realisticvillagers.util.customblockdata.CustomBlockData;
 import net.wesjd.anvilgui.AnvilGUI;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.RandomUtils;
 import org.apache.commons.lang3.tuple.Pair;
+import org.bstats.bukkit.Metrics;
 import org.bukkit.*;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.MemoryConfiguration;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.configuration.serialization.ConfigurationSerialization;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.*;
 import org.bukkit.event.Listener;
 import org.bukkit.inventory.*;
 import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.metadata.Metadatable;
+import org.bukkit.persistence.PersistentDataAdapterContext;
+import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionType;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -64,17 +69,11 @@ import java.lang.reflect.Constructor;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.*;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.function.Predicate;
-import java.util.logging.Level;
+import java.util.function.*;
 import java.util.logging.Logger;
 
 @Getter
 public final class RealisticVillagers extends JavaPlugin {
-
-    private static final String SKINS_REPO = "https://raw.githubusercontent.com/aematsubara/villager-skins/main/";
 
     private final NamespacedKey giftKey = key("GiftUUID");
     private final NamespacedKey marriedWith = key("MarriedWith");
@@ -89,11 +88,27 @@ public final class RealisticVillagers extends JavaPlugin {
     private final NamespacedKey childSexKey = key("ChildSex");
     private final NamespacedKey zombieTransformKey = key("ZombieTransform");
     private final NamespacedKey fishedKey = key("Fished");
-    private final NamespacedKey npcValuesKey = key("VillagerNPCValues");
-    private final @Deprecated NamespacedKey tamedByPlayerKey = key("TamedByPlayer");
+
+    @ApiStatus.Internal
+    private final @Getter(AccessLevel.NONE) NamespacedKey valuesKey = key("RValues"); // New main key.
+    private final NamespacedKey inventoryKey = key("RInventory");
+    @ApiStatus.Internal
+    private final @Getter(AccessLevel.NONE) NamespacedKey npcValuesKey = key("VillagerNPCValues"); // Previous main key.
+
+    public NamespacedKey getNpcValuesKey() {
+        VersionMatcher matcher = VersionMatcher.getByMinecraftVersion();
+        return matcher != null && matcher.higherOrEqualThan(VersionMatcher.v1_21_8) ? valuesKey : getLegacyNpcValuesKey();
+    }
+
+    @ApiStatus.Internal
+    public NamespacedKey getLegacyNpcValuesKey() {
+        return npcValuesKey;
+    }
+
+    private final @ApiStatus.Internal NamespacedKey tamedByPlayerKey = key("TamedByPlayer");
     private final NamespacedKey tamedByVillagerKey = key("TamedByVillager");
     private final NamespacedKey isBeingLootedKey = key("IsBeingLooted");
-    private final @Deprecated NamespacedKey ignoreVillagerKey = key("IgnoreVillager");
+    private final @ApiStatus.Internal NamespacedKey ignoreVillagerKey = key("IgnoreVillager");
     private final NamespacedKey villagerUUIDKey = key("VillagerUUID");
     private final NamespacedKey divorcePapersKey = key("DivorcePapers");
     private final NamespacedKey raidStatsKey = key("RaidStats");
@@ -112,19 +127,16 @@ public final class RealisticVillagers extends JavaPlugin {
     private @Setter Shape whistle;
     private @Setter Shape cross;
 
+    private AnnoyingMeterManager annoyingManager;
     private ReviveManager reviveManager;
     private GiftManager giftManager;
     private ChestManager chestManager;
     private ExpectingManager expectingManager;
     private InteractCooldownManager cooldownManager;
     private CompatibilityManager compatibilityManager;
-    private NametagManager nametagManager;
 
     private Messages messages;
     private INMSConverter converter;
-
-    private FileConfiguration newConfig = null;
-    private final File configFile = new File(getDataFolder(), "config.yml");
 
     private final List<String> defaultTargets = new ArrayList<>();
     private final Set<Gift> wantedItems = new HashSet<>();
@@ -153,13 +165,20 @@ public final class RealisticVillagers extends JavaPlugin {
             "schedules",
             "revive.head-item");
     private static final List<String> GUI_TYPES = List.of("main", "equipment", "combat", "whistle", "skin", "new-skin");
+    private static final int BSTATS_ID = 27463;
+    private static final @SuppressWarnings("UnstableApiUsage") NamespacedKey MM_KEY = new NamespacedKey("mythicmobs", "type");
+
+    static {
+        // Register our data serializators.
+        ConfigurationSerialization.registerClass(GossipEntryWrapper.class);
+        ConfigurationSerialization.registerClass(OfflineDataWrapper.class);
+    }
+
+    public static final PersistentDataType<byte[], OfflineDataWrapper> VILLAGER_DATA = new ConfigurationSerializableDataType<>(OfflineDataWrapper.class);
 
     @Override
     public void onLoad() {
         PacketEvents.setAPI(SpigotPacketEventsBuilder.build(this));
-        PacketEvents.getAPI().getSettings()
-                .reEncodeByDefault(true)
-                .checkForUpdates(false);
         PacketEvents.getAPI().load();
 
         long now = System.nanoTime();
@@ -168,25 +187,27 @@ public final class RealisticVillagers extends JavaPlugin {
         logger.info("****************************************");
         logger.info("Loading compatibilities...");
 
-        compatibilityManager = new CompatibilityManager(this);
+        compatibilityManager = new CompatibilityManager();
 
         // Shopkeeper, Citizens & (probably) RainbowsPro; for VillagerMarket, the villager shouldn't have AI to work properly.
-        compatibilityManager.addCompatibility(villager -> villager.hasAI() && !villager.hasMetadata("shopkeeper") && !villager.hasMetadata("NPC"));
+        compatibilityManager.addCompatibility(getName(), villager -> villager.hasAI() && !villager.hasMetadata("shopkeeper") && !villager.hasMetadata("NPC"));
 
-        // EliteMobs.
-        if (getServer().getPluginManager().getPlugin("EliteMobs") != null) {
-            compatibilityManager.addCompatibility(new EMCompatibility());
-        }
+        // General compatibilities.
+        addCompatibility("EliteMobs", EMCompatibility::new);
+        addCompatibility("ViaVersion", ViaCompatibility::new);
+        addCompatibility("VillagerTradeLimiter", VTLCompatibility::new);
+        addCompatibility("MythicMobs", () ->
+                villager -> !villager.getPersistentDataContainer().has(MM_KEY, PersistentDataType.STRING));
 
         logger.info("Compatibilities loaded!");
         logger.info("");
         logger.info("Registering custom entities...");
 
-        String[] packageVersion = Bukkit.getServer().getClass().getPackage().getName().split("\\.");
-
-        String internalName = packageVersion.length == 4 ? packageVersion[3].toLowerCase() : XReflection.MINOR_NUMBER == 21 ? "v1_21_r1" : "v1_20_r4";
-        try {
-            Class<?> converterClass = Class.forName(INMSConverter.class.getPackageName() + "." + internalName + ".NMSConverter");
+        VersionMatcher matcher = VersionMatcher.getByMinecraftVersion();
+        if (matcher == null) {
+            logger.severe("NMSConverter couldn't find a valid implementation for this server version.");
+        } else try {
+            Class<?> converterClass = Class.forName(INMSConverter.class.getPackageName() + "." + matcher.getPackageName() + ".NMSConverter");
             Constructor<?> converterConstructor = converterClass.getConstructor(getClass());
             converter = (INMSConverter) converterConstructor.newInstance(this);
             converter.registerEntities();
@@ -203,6 +224,13 @@ public final class RealisticVillagers extends JavaPlugin {
         logger.info("****************************************");
     }
 
+    private void addCompatibility(String name, Supplier<Compatibility> supplier) {
+        PluginManager manager = getServer().getPluginManager();
+        if (manager.getPlugin(name) == null) return;
+
+        compatibilityManager.addCompatibility(name, supplier.get());
+    }
+
     @Override
     public void onEnable() {
         long now = System.nanoTime();
@@ -217,10 +245,13 @@ public final class RealisticVillagers extends JavaPlugin {
             return;
         }
 
+        // Enable bStats so we can track which versions we should keep supporting.
+        new Metrics(this, BSTATS_ID);
+
         logger.info("Loading skin files...");
 
-        saveSkins("male");
-        saveSkins("female");
+        saveResource("skins/female.yml");
+        saveResource("skins/male.yml");
 
         logger.info("Skins loaded!");
         logger.info("");
@@ -239,12 +270,12 @@ public final class RealisticVillagers extends JavaPlugin {
         logger.info("");
         logger.info("Creating managers...");
 
+        annoyingManager = new AnnoyingMeterManager(this);
         reviveManager = new ReviveManager(this);
         giftManager = new GiftManager(this);
         chestManager = new ChestManager(this);
         expectingManager = new ExpectingManager(this);
         cooldownManager = new InteractCooldownManager(this);
-        nametagManager = XReflection.supports(20, 2) ? new NametagManager(this) : null;
         CustomBlockData.registerListener(this);
 
         logger.info("Managers created!");
@@ -311,18 +342,6 @@ public final class RealisticVillagers extends JavaPlugin {
     private void logLoadingTime(boolean loading, long now) {
         String time = String.format(Locale.ROOT, "%.3fs", (double) (System.nanoTime() - now) / 1.0E9);
         getLogger().info((loading ? "Loading" : "Enabling") + " took " + time + "!");
-    }
-
-    @SuppressWarnings("ResultOfMethodCallIgnored")
-    private void loadFileOrCreate(String folder, String fileName) {
-        File file = new File(folder, fileName);
-        if (file.exists()) return;
-
-        try {
-            file.createNewFile();
-        } catch (IOException exception) {
-            exception.printStackTrace();
-        }
     }
 
     private void fillIgnoredSections(FileConfiguration config) {
@@ -616,28 +635,11 @@ public final class RealisticVillagers extends JavaPlugin {
     }
 
     @Override
-    public @NotNull FileConfiguration getConfig() {
-        if (newConfig == null) reloadConfig();
-        return newConfig;
-    }
-
-    @Override
     public void reloadConfig() {
-        newConfig = YamlConfiguration.loadConfiguration(configFile);
-    }
+        super.reloadConfig();
 
-    @Override
-    public void saveConfig() {
-        try {
-            getConfig().save(configFile);
-        } catch (IOException exception) {
-            getLogger().log(Level.SEVERE, "Could not save config to " + configFile, exception);
-        }
-    }
-
-    @Override
-    public void saveDefaultConfig() {
-        if (!configFile.exists()) saveResource("config.yml", false);
+        // We don't want to use default values.
+        getConfig().setDefaults(new MemoryConfiguration());
     }
 
     public ItemBuilder getItem(String path) {
@@ -682,7 +684,7 @@ public final class RealisticVillagers extends JavaPlugin {
             if (Strings.isNullOrEmpty(enchantmentString)) continue;
             String[] data = PluginUtils.splitData(enchantmentString);
 
-            Enchantment enchantment = Registry.ENCHANTMENT.get(NamespacedKey.minecraft(data[0].toLowerCase()));
+            Enchantment enchantment = Registry.ENCHANTMENT.get(NamespacedKey.minecraft(data[0].toLowerCase(Locale.ROOT)));
 
             int level;
             try {
@@ -695,7 +697,7 @@ public final class RealisticVillagers extends JavaPlugin {
         }
 
         for (String flag : config.getStringList(path + ".flags")) {
-            ItemFlag flagValue = PluginUtils.getOrNull(ItemFlag.class, flag.toUpperCase());
+            ItemFlag flagValue = PluginUtils.getOrNull(ItemFlag.class, flag.toUpperCase(Locale.ROOT));
             if (flagValue != null) builder.addItemFlags(flagValue);
         }
 
@@ -795,23 +797,6 @@ public final class RealisticVillagers extends JavaPlugin {
         return colors;
     }
 
-    private void saveSkins(String sex) {
-        String name = sex + ".yml";
-        saveFile(SKINS_REPO + name, getSkinFolder(), name);
-    }
-
-    private void saveFile(String url, String outputFolder, String outputFile) {
-        try {
-            File file = new File(outputFolder, outputFile);
-            if (file.exists()) return;
-
-            FileUtils.copyURLToFile(new URL(url), file);
-        } catch (IOException exception) {
-            exception.printStackTrace();
-            loadFileOrCreate(getSkinFolder(), outputFile);
-        }
-    }
-
     @SuppressWarnings("SameParameterValue")
     public void saveResource(String name) {
         File file = new File(getDataFolder(), name);
@@ -835,7 +820,7 @@ public final class RealisticVillagers extends JavaPlugin {
         defaultTargets.clear();
 
         for (String entity : getConfig().getStringList("default-target-entities")) {
-            EntityType type = PluginUtils.getOrNull(EntityType.class, entity.toUpperCase());
+            EntityType type = PluginUtils.getOrNull(EntityType.class, entity.toUpperCase(Locale.ROOT));
             if (type == null) continue;
 
             Class<? extends Entity> clazz = type.getEntityClass();
@@ -868,7 +853,7 @@ public final class RealisticVillagers extends JavaPlugin {
 
     public boolean isEnabledIn(String world) {
         String type = Config.WORLDS_FILTER_TYPE.asString();
-        if (type == null || !FILTER_TYPES.contains(type.toUpperCase())) return true;
+        if (type == null || !FILTER_TYPES.contains(type.toUpperCase(Locale.ROOT))) return true;
 
         boolean contains = worlds.contains(world);
         return type.equalsIgnoreCase("WHITELIST") == contains;
@@ -899,12 +884,11 @@ public final class RealisticVillagers extends JavaPlugin {
                 .stream()
                 .filter(offline -> {
                     Villager bukkit = offline.bukkit() instanceof Villager villager ? villager : null;
-                    UUID playerUUID = player.getUniqueId();
                     if (bukkit != null) {
                         Optional<IVillagerNPC> online = converter.getNPC(bukkit);
-                        return online.isPresent() && online.get().isFamily(playerUUID, true);
+                        return online.isPresent() && online.get().isFamily(player, true);
                     } else {
-                        return offline.isFamily(playerUUID, true);
+                        return offline.isFamily(player, true);
                     }
                 }).toList();
 
@@ -943,10 +927,7 @@ public final class RealisticVillagers extends JavaPlugin {
                 ItemStack item = loot.getItem();
                 if (item == null) continue;
 
-                equipment.setItem(slot, loot.randomVanillaEnchantments() ?
-                        converter.randomVanillaEnchantments(living.getLocation(), item) :
-                        item);
-
+                equipment.setItem(slot, item);
                 equipped.put(slot, loot);
                 break;
             }
@@ -965,10 +946,6 @@ public final class RealisticVillagers extends JavaPlugin {
             if ((loot.forRange() && testBothHand(equipped, ItemStackUtils::isRangeWeapon))
                     || (loot.bow() && testBothHand(equipped, inHand -> inHand.getType() == Material.BOW))
                     || (loot.crossbow() && testBothHand(equipped, inHand -> inHand.getType() == Material.CROSSBOW))) {
-
-                if (loot.randomVanillaEnchantments()) {
-                    item = converter.randomVanillaEnchantments(living.getLocation(), item);
-                }
 
                 if (loot.offHandIfPossible() && equipped.get(EquipmentSlot.OFF_HAND) == null) {
                     equipment.setItemInOffHand(item);
@@ -1028,7 +1005,6 @@ public final class RealisticVillagers extends JavaPlugin {
                 onlyForCrossbow = config.getBoolean("spawn-loot." + name + "." + path + ".only-for-crossbow");
             }
 
-            boolean randomVanillaEnchantments = config.getBoolean("spawn-loot." + name + "." + path + ".random-vanilla-enchantments");
             boolean offHandIfPossible = config.getBoolean("spawn-loot." + name + "." + path + ".off-hand-if-possible");
 
             loots.add(new ItemLoot(
@@ -1036,7 +1012,6 @@ public final class RealisticVillagers extends JavaPlugin {
                     chance,
                     onlyForBow,
                     onlyForCrossbow,
-                    randomVanillaEnchantments,
                     offHandIfPossible));
         }
 
@@ -1045,7 +1020,7 @@ public final class RealisticVillagers extends JavaPlugin {
     }
 
     private @NotNull String slotName(@NotNull EquipmentSlot slot) {
-        return slot.name().toLowerCase().replace("_", "-");
+        return slot.name().toLowerCase(Locale.ROOT).replace("_", "-");
     }
 
     @Contract("_ -> new")
@@ -1059,7 +1034,7 @@ public final class RealisticVillagers extends JavaPlugin {
     }
 
     public String getProfessionFormatted(@NotNull Villager.Profession profession, boolean isMale) {
-        return getProfessionFormatted(profession.name().toLowerCase(), isMale);
+        return getProfessionFormatted(profession.name().toLowerCase(Locale.ROOT), isMale);
     }
 
     public String getProfessionFormatted(String profession, boolean isMale) {
@@ -1067,5 +1042,21 @@ public final class RealisticVillagers extends JavaPlugin {
         return getConfig().getString(
                 String.format("variable-text.profession.%s.%s", sex, profession),
                 PluginUtils.capitalizeFully(profession));
+    }
+
+    public static @Nullable OfflineDataWrapper villagerDataFromPDC(RealisticVillagers plugin, PersistentDataContainer container) {
+        try {
+            return container.get(plugin.getNpcValuesKey(), RealisticVillagers.VILLAGER_DATA);
+        } catch (Exception exception) {
+            return null;
+        }
+    }
+
+    public static @Nullable OfflineDataWrapper villagerDataFromPrimitive(byte[] primitive, PersistentDataAdapterContext context) {
+        try {
+            return VILLAGER_DATA.fromPrimitive(primitive, context);
+        } catch (Exception exception) {
+            return null;
+        }
     }
 }

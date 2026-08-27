@@ -108,7 +108,7 @@ public final class PlayerListeners implements Listener {
             Optional<IVillagerNPC> npc = plugin.getConverter().getNPC(villager);
             if (npc.isEmpty() || npc.get().isInsideRaid()) continue;
             if (npc.get().getReputation(player.getUniqueId()) < requiredReputation) continue;
-            if (ignoredActivities.contains(npc.get().getActivityName(EMPTY).toLowerCase())) continue;
+            if (ignoredActivities.contains(npc.get().getActivityName(EMPTY).toLowerCase(Locale.ROOT))) continue;
 
             InteractionTargetType relationship = InteractionTargetType.getInteractionTarget(npc.get(), player);
             if (!cooldown.canInteract(player, villager, relationship.getName(), Config.GREET_MESSAGES_PER_TYPE_COOLDOWN.asLong())) {
@@ -183,8 +183,6 @@ public final class PlayerListeners implements Listener {
         long procreation = container.getOrDefault(plugin.getProcreationKey(), PersistentDataType.LONG, -1L);
         if (procreation == -1) return;
 
-        long elapsedTime = System.currentTimeMillis() - procreation;
-
         event.setCancelled(true);
 
         Block clicked = event.getClickedBlock();
@@ -197,9 +195,13 @@ public final class PlayerListeners implements Listener {
 
         Messages messages = plugin.getMessages();
 
-        int growCooldown = Config.BABY_GROW_COOLDOWN.asInt();
-        if (elapsedTime <= growCooldown) {
-            String next = PluginUtils.getTimeString(growCooldown - elapsedTime);
+        long elapsed = System.currentTimeMillis() - procreation,
+                cooldown = Config.BABY_GROW_COOLDOWN.asLong(),
+                leftMillis = cooldown - elapsed,
+                leftSeconds = (leftMillis / 1000L) % 60L;
+
+        if (elapsed < cooldown && leftSeconds > 0) {
+            String next = PluginUtils.formatMillis(leftMillis);
             messages.send(player, Messages.Message.BABY_GROW, string -> string.replace("%time%", next));
             return;
         }

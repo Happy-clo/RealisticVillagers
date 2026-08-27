@@ -1,5 +1,6 @@
 package me.matsubara.realisticvillagers.npc.modifier;
 
+import com.cryptomorin.xseries.reflection.XReflection;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataType;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
@@ -21,14 +22,14 @@ import java.util.function.Function;
 
 public class MetadataModifier extends NPCModifier {
 
-    private final List<EntityData> metadata = new ArrayList<>();
+    private final List<EntityData<?>> metadata = new ArrayList<>();
 
     public MetadataModifier(NPC npc) {
         super(npc);
     }
 
     public <I, O> MetadataModifier queue(@NotNull EntityMetadata<I, O> metadata, I value) {
-        this.metadata.add(new EntityData(metadata.index(), metadata.outputType(), metadata.mapper().apply(value)));
+        this.metadata.add(new EntityData<>(metadata.index(), metadata.outputType(), metadata.mapper().apply(value)));
         return this;
     }
 
@@ -38,13 +39,38 @@ public class MetadataModifier extends NPCModifier {
         super.send(players);
     }
 
+    @SuppressWarnings("UnusedReturnValue")
+    public @NotNull MetadataModifier queueShoulderEntity(boolean left, Object entity) {
+        if (XReflection.supports(21, 9)) {
+            // Since 1.21.9 we just have to send the variant id.
+            queue(left ?
+                    EntityMetadata.SHOULDER_ENTITY_LEFT_INT :
+                    EntityMetadata.SHOULDER_ENTITY_RIGHT_INT, entity);
+            return this;
+        }
+
+        // Before 1.21.9 we need to send a compound tag.
+        queue(left ?
+                EntityMetadata.SHOULDER_ENTITY_LEFT_NBT :
+                EntityMetadata.SHOULDER_ENTITY_RIGHT_NBT, entity);
+        return this;
+    }
+
     public void updateShoulderEntities() {
-        IVillagerNPC npc = this.npc.getVillager();
-        queue(MetadataModifier.EntityMetadata.SHOULDER_ENTITY_LEFT, npc.getShoulderEntityLeft()).send();
-        queue(MetadataModifier.EntityMetadata.SHOULDER_ENTITY_RIGHT, npc.getShoulderEntityRight()).send();
+        IVillagerNPC npc = this.npc.getNpc();
+        queueShoulderEntity(true, npc.getShoulderEntityLeft()).send();
+        queueShoulderEntity(false, npc.getShoulderEntityRight()).send();
     }
 
     public record EntityMetadata<I, O>(int index, EntityDataType<O> outputType, Function<I, O> mapper) {
+
+        private static final byte ALL_BUT_CAPE = SkinSection.JACKET // Cape is excluded.
+                .combine(SkinSection.LEFT_SLEEVE)
+                .combine(SkinSection.RIGHT_SLEEVE)
+                .combine(SkinSection.LEFT_PANTS)
+                .combine(SkinSection.RIGHT_PANTS)
+                .combine(SkinSection.HAT)
+                .getMask();
 
         public static @NotNull EntityMetadata<Byte, Byte> ENTITY_DATA = new EntityMetadata<>(
                 0,
@@ -92,19 +118,28 @@ public class MetadataModifier extends NPCModifier {
                 Optional::of);
 
         public static final EntityMetadata<Boolean, Byte> SKIN_LAYERS = new EntityMetadata<>(
-                17,
+                XReflection.supports(21, 9) ? 16 : 17,
                 EntityDataTypes.BYTE,
-                input -> input ? SkinSection.ALL.getMask() : 0);
+                input -> input ? ALL_BUT_CAPE : 0);
 
-        public static final EntityMetadata<Object, NBTCompound> SHOULDER_ENTITY_LEFT = new EntityMetadata<>(
+        public static final EntityMetadata<Object, NBTCompound> SHOULDER_ENTITY_LEFT_NBT = new EntityMetadata<>(
                 19,
                 EntityDataTypes.NBT,
                 SpigotReflectionUtil::fromMinecraftNBT);
 
-        public static final EntityMetadata<Object, NBTCompound> SHOULDER_ENTITY_RIGHT = new EntityMetadata<>(
+        public static final EntityMetadata<Object, NBTCompound> SHOULDER_ENTITY_RIGHT_NBT = new EntityMetadata<>(
                 20,
                 EntityDataTypes.NBT,
                 SpigotReflectionUtil::fromMinecraftNBT);
 
+        private static final EntityMetadata<Object, Optional<Integer>> SHOULDER_ENTITY_LEFT_INT = new EntityMetadata<>(
+                19,
+                EntityDataTypes.OPTIONAL_INT,
+                variant -> variant instanceof Integer integer ? Optional.of(integer) : Optional.empty());
+
+        private static final EntityMetadata<Object, Optional<Integer>> SHOULDER_ENTITY_RIGHT_INT = new EntityMetadata<>(
+                20,
+                EntityDataTypes.OPTIONAL_INT,
+                variant -> variant instanceof Integer integer ? Optional.of(integer) : Optional.empty());
     }
 }

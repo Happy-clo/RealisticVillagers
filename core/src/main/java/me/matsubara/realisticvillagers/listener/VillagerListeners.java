@@ -18,7 +18,7 @@ import me.matsubara.realisticvillagers.files.Config;
 import me.matsubara.realisticvillagers.files.Messages;
 import me.matsubara.realisticvillagers.gui.InteractGUI;
 import me.matsubara.realisticvillagers.gui.types.MainGUI;
-import me.matsubara.realisticvillagers.manager.NametagManager;
+import me.matsubara.realisticvillagers.manager.ExpectingManager;
 import me.matsubara.realisticvillagers.npc.NPC;
 import me.matsubara.realisticvillagers.tracker.VillagerTracker;
 import me.matsubara.realisticvillagers.util.ItemBuilder;
@@ -40,10 +40,7 @@ import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.world.GenericGameEvent;
-import org.bukkit.inventory.EntityEquipment;
-import org.bukkit.inventory.EquipmentSlot;
-import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
@@ -52,10 +49,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandle;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 public final class VillagerListeners extends SimplePacketListenerAbstract implements Listener {
 
@@ -88,7 +82,7 @@ public final class VillagerListeners extends SimplePacketListenerAbstract implem
         // PlayerInteractEntityEvent won't be called if this one is cancelled.
         // With this change, we fix the client freezing for some seconds when right-clicking a villager.
         EquipmentSlot slot = wrapper.getHand() == InteractionHand.MAIN_HAND ? EquipmentSlot.HAND : EquipmentSlot.OFF_HAND;
-        if (handleInteract((Player) event.getPlayer(), slot, action, npc.get().getVillager().bukkit())) {
+        if (handleInteract(event.getPlayer(), slot, action, npc.get().getNpc().bukkit())) {
             event.setCancelled(true);
         }
     }
@@ -130,26 +124,7 @@ public final class VillagerListeners extends SimplePacketListenerAbstract implem
 
         // Update villager skin when changing a job after 1 tick since this event is called before changing a job.
         // Respawn NPC with the new profession texture.
-        plugin.getServer().getScheduler().runTask(plugin, () -> {
-            plugin.getConverter().getNPC(villager).ifPresent(npc -> {
-                NametagManager nametagManager = plugin.getNametagManager();
-                if (nametagManager != null) nametagManager.resetNametag(npc);
-            });
-            tracker.refreshNPCSkin(villager, true);
-        });
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onVillagerAcquireTrade(@NotNull VillagerAcquireTradeEvent event) {
-        if (!(event.getEntity() instanceof Villager villager)) return;
-
-        VillagerTracker tracker = plugin.getTracker();
-        if (tracker.isInvalid(villager)) return;
-
-        plugin.getServer().getScheduler().runTask(plugin, () -> plugin.getConverter().getNPC(villager).ifPresent(npc -> {
-            NametagManager nametagManager = plugin.getNametagManager();
-            if (nametagManager != null) nametagManager.resetNametag(npc);
-        }));
+        plugin.getServer().getScheduler().runTask(plugin, () -> tracker.refreshNPCSkin(villager, true));
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -251,7 +226,7 @@ public final class VillagerListeners extends SimplePacketListenerAbstract implem
         if (npc == null) return cancel;
 
         if (hand != EquipmentSlot.HAND) return true;
-        if (action != WrapperPlayClientInteractEntity.InteractAction.INTERACT) return true;
+        if (action != null && action != WrapperPlayClientInteractEntity.InteractAction.INTERACT) return true;
 
         plugin.getServer().getScheduler().runTask(plugin, (() -> {
             Messages messages = plugin.getMessages();
@@ -294,8 +269,8 @@ public final class VillagerListeners extends SimplePacketListenerAbstract implem
                 return;
             }
 
-            if (isExpecting(player, npc, ExpectingType.GIFT)) return;
-            if (isExpecting(player, npc, ExpectingType.BED)) return;
+            if (isExpecting(player, npc, ExpectingType.GIFT, item)) return;
+            if (isExpecting(player, npc, ExpectingType.BED, item)) return;
 
             if (npc.isInteracting()) {
                 if (!npc.getInteractingWith().equals(player.getUniqueId())) {
@@ -316,6 +291,8 @@ public final class VillagerListeners extends SimplePacketListenerAbstract implem
                 messages.send(player, Messages.Message.INTERACT_FAIL_TRADING);
                 return;
             }
+
+            if (plugin.getAnnoyingManager().isVillagerAnnoyed(player, npc)) return;
 
             // Open custom GUI.
             new MainGUI(plugin, npc, player);
@@ -339,10 +316,6 @@ public final class VillagerListeners extends SimplePacketListenerAbstract implem
 
         npc.setVillagerName(name);
 
-        // Refresh nametag.
-        NametagManager nametagManager = plugin.getNametagManager();
-        if (nametagManager != null) nametagManager.resetNametag(npc);
-
         // Refresh skin.
         plugin.getTracker().refreshNPCSkin(npc.bukkit(), false);
 
@@ -351,27 +324,49 @@ public final class VillagerListeners extends SimplePacketListenerAbstract implem
                 .build());
     }
 
-    private boolean isExpecting(Player player, @NotNull IVillagerNPC npc, ExpectingType checkType) {
+    private boolean isExpecting(Player player, @NotNull IVillagerNPC npc, ExpectingType checkType, @Nullable ItemStack item) {
         if (!npc.isExpecting()) return false;
 
         ExpectingType expecting = npc.getExpectingType();
         if (expecting != checkType) return false;
 
+        UUID playerUUID = player.getUniqueId();
         Messages messages = plugin.getMessages();
 
-        if (!npc.getExpectingFrom().equals(player.getUniqueId())) {
+        // This villager is expecting something from another player.
+        if (!npc.getExpectingFrom().equals(playerUUID)) {
             messages.send(player, Messages.Message.valueOf("INTERACT_FAIL_EXPECTING_" + expecting + "_FROM_SOMEONE"));
             return true;
         }
 
+        // This villager is expecting something from this player, can't open the menu.
         if (!player.isSneaking()) {
+            ExpectingManager expectingManager = plugin.getExpectingManager();
+            if (expecting.isGift()
+                    && expectingManager.getGiftModeFromConfig().rightClick()
+                    && item != null && !item.getType().isAir()
+                    && npc.bukkit() instanceof InventoryHolder holder) {
+                // Remove one unit.
+                ItemStack unit = new ItemBuilder(item)
+                        .setAmount(1)
+                        .build();
+
+                // Remove from player inventory, add to villager inventory.
+                player.getInventory().removeItem(unit);
+                holder.getInventory().addItem(unit);
+
+                // Handle.
+                expectingManager.handleVillagerPickUp(npc, item, playerUUID, player, null);
+                return true;
+            }
             messages.send(player, Messages.Message.valueOf("INTERACT_FAIL_EXPECTING_" + expecting + "_FROM_YOU"));
             return true;
         }
 
+        // This villager is expecting something from this player (sneaking), stop interaction.
         messages.send(player, npc, Messages.Message.valueOf((expecting.isGift() ? "GIFT_EXPECTING" : "SET_HOME") + "_FAIL"));
         npc.stopExpecting();
-        plugin.getCooldownManager().removeCooldown(player, checkType.name().toLowerCase());
+        plugin.getCooldownManager().removeCooldown(player, checkType.name().toLowerCase(Locale.ROOT));
         return true;
     }
 
@@ -495,12 +490,8 @@ public final class VillagerListeners extends SimplePacketListenerAbstract implem
             plugin.getMessages().send(player, npc, Messages.Message.ON_HIT);
         }
 
-        NametagManager nametagManager = plugin.getNametagManager();
-        if (nametagManager != null && !hasTotem(villager) && !alive) {
-            nametagManager.remove(npc);
-        }
-
-        if (!npc.isDamageSourceBlocked()) return;
+        float blocking = (float) (-event.getDamage(EntityDamageEvent.DamageModifier.BLOCKING));
+        if (!npc.isDamageSourceBlocked() && blocking <= 0.0f) return;
 
         try {
             EntityDamageEvent.DamageModifier modifier = EntityDamageEvent.DamageModifier.BLOCKING;
@@ -527,9 +518,9 @@ public final class VillagerListeners extends SimplePacketListenerAbstract implem
             IVillagerNPC npc = optional.orElse(null);
             if (npc == null
                     || !npc.canAttack()
-                    || npc.isFamily(damager.getUniqueId(), true)) return;
+                    || npc.isFamily(damager, true)) return;
 
-            if (npc.isFamily(player.getUniqueId(), true) && Config.VILLAGER_DEFEND_FAMILY_MEMBER.asBool()) {
+            if (npc.isFamily(player, true) && Config.VILLAGER_DEFEND_FAMILY_MEMBER.asBool()) {
                 npc.attack(damager);
                 continue;
             }
@@ -547,16 +538,5 @@ public final class VillagerListeners extends SimplePacketListenerAbstract implem
                 npc.attack(damager);
             }
         }
-    }
-
-    private boolean hasTotem(@NotNull AbstractVillager villager) {
-        EntityEquipment equipment = villager.getEquipment();
-        if (equipment == null) return false;
-
-        ItemStack mainHand = equipment.getItemInMainHand();
-        if (mainHand.getType() == Material.TOTEM_OF_UNDYING) return true;
-
-        ItemStack offHand = equipment.getItemInOffHand();
-        return offHand.getType() == Material.TOTEM_OF_UNDYING;
     }
 }

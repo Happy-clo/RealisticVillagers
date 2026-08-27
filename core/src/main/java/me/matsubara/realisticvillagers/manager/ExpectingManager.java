@@ -17,10 +17,8 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.type.Bed;
-import org.bukkit.entity.Entity;
-import org.bukkit.entity.Item;
-import org.bukkit.entity.Player;
-import org.bukkit.entity.Villager;
+import org.bukkit.entity.*;
+import org.bukkit.event.Cancellable;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -39,6 +37,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -82,6 +81,9 @@ public final class ExpectingManager implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerDropItem(@NotNull PlayerDropItemEvent event) {
+        // We'll handle gifting on VillagerListeners#isExpecting().
+        if (!getGiftModeFromConfig().drop()) return;
+
         UUID uuid = event.getPlayer().getUniqueId();
 
         IVillagerNPC npc = villagerExpectingCache.get(uuid);
@@ -139,35 +141,20 @@ public final class ExpectingManager implements Listener {
         // We know that thrower isn't null since isOurItem() is true.
         @SuppressWarnings("DataFlowIssue") Player throwerPlayer = Bukkit.getPlayer(thrower);
 
+        // The villager picked up the item.
         if (npc.bukkit().getUniqueId().equals(pickerUUID)) {
-            remove(thrower);
             removeMetadata(item, plugin.getGiftKey());
-
-            // Stop expecting gift.
-            npc.stopExpecting();
-
-            // Cancel event if player is offline.
-            if (throwerPlayer == null) {
-                event.setCancelled(true);
-                return;
-            }
-
-            ItemStack stack = item.getItemStack();
-
-            // Call event, handle gift & add to cooldown.
-            plugin.getServer().getPluginManager().callEvent(new VillagerPickGiftEvent(
-                    npc,
-                    throwerPlayer,
-                    stack));
-            handleGift(npc, throwerPlayer, stack);
-            plugin.getCooldownManager().addCooldown(throwerPlayer, npc.bukkit(), "gift");
+            handleVillagerPickUp(npc, item.getItemStack(), thrower, throwerPlayer, event);
             return;
         }
 
+        // A random player tried to pick up the gift.
         if (!pickerUUID.equals(thrower)) {
             event.setCancelled(true);
             return;
         }
+
+        // The player gifting picked the item.
 
         npc.setGiftDropped(false);
         removeMetadata(item, plugin.getGiftKey());
@@ -179,6 +166,27 @@ public final class ExpectingManager implements Listener {
             interact.setShouldStopInteracting(true);
             throwerPlayer.closeInventory();
         }
+    }
+
+    public void handleVillagerPickUp(@NotNull IVillagerNPC npc, ItemStack item, UUID thrower, Player throwerPlayer, @Nullable Cancellable cancellable) {
+        remove(thrower);
+
+        // Stop expecting gift.
+        npc.stopExpecting();
+
+        // Cancel event if player is offline.
+        if (throwerPlayer == null) {
+            if (cancellable != null) cancellable.setCancelled(true);
+            return;
+        }
+
+        // Call event, handle gift and add to cooldown.
+        plugin.getServer().getPluginManager().callEvent(new VillagerPickGiftEvent(
+                npc,
+                throwerPlayer,
+                item));
+        handleGift(npc, throwerPlayer, item);
+        plugin.getCooldownManager().addCooldown(throwerPlayer, npc.bukkit(), "gift");
     }
 
     private boolean notOurItem(Item item) {
@@ -244,23 +252,23 @@ public final class ExpectingManager implements Listener {
         npc.stopExpecting();
     }
 
-    private void handleGift(@NotNull IVillagerNPC npc, @NotNull Player player, @NotNull ItemStack gift) {
-        UUID playerUUID = player.getUniqueId();
+    public void handleGift(@NotNull IVillagerNPC npc, @NotNull Player player, @NotNull ItemStack gift) {
+        LivingEntity bukkit = npc.bukkit();
 
-        int reputation = npc.getReputation(playerUUID);
+        int reputation = npc.getReputation(player);
         int repRequiredToMarry = Config.REPUTATION_REQUIRED_TO_MARRY.asInt();
 
         boolean isRing = PluginUtils.isItem(gift, plugin.getIsRingKey());
         boolean isCross = PluginUtils.isItem(gift, plugin.getIsCrossKey());
 
-        boolean alreadyMarriedWithPlayer = isRing && npc.isPartner(playerUUID);
-        boolean alreadyHasCross = isCross && PluginUtils.hasAnyOf((InventoryHolder) npc.bukkit(), plugin.getIsCrossKey());
-        boolean isAdult = !(npc.bukkit() instanceof Villager villager) || villager.isAdult();
+        boolean alreadyMarriedWithPlayer = isRing && npc.isPartner(player);
+        boolean alreadyHasCross = isCross && PluginUtils.hasAnyOf((InventoryHolder) bukkit, plugin.getIsCrossKey());
+        boolean isAdult = !(bukkit instanceof Villager villager) || villager.isAdult();
 
         boolean successByRing = isRing
                 && isAdult
                 && reputation >= repRequiredToMarry
-                && !npc.isFamily(playerUUID, false)
+                && !npc.isFamily(player, false)
                 && !npc.hasPartner()
                 && !plugin.isMarried(player)
                 && !alreadyMarriedWithPlayer;
@@ -290,29 +298,29 @@ public final class ExpectingManager implements Listener {
 
         if (amount > 1) {
             if (success) {
-                npc.addMinorPositive(playerUUID, amount);
+                npc.addMinorPositive(player, amount);
             } else {
-                npc.addMinorNegative(playerUUID, amount);
+                npc.addMinorNegative(player, amount);
             }
         }
 
         Messages messages = plugin.getMessages();
 
         if (successByRing) {
-            npc.bukkit().playEffect(EntityEffect.VILLAGER_HEART);
+            bukkit.playEffect(EntityEffect.VILLAGER_HEART);
             messages.send(player, npc, Messages.Message.MARRRY_SUCCESS);
-            npc.setPartner(playerUUID, false);
+            npc.setPartner(player);
             player.getPersistentDataContainer().set(
                     plugin.getMarriedWith(),
                     PersistentDataType.STRING,
-                    npc.bukkit().getUniqueId().toString());
+                    bukkit.getUniqueId().toString());
             return;
         }
 
         if (success) {
-            npc.bukkit().playEffect(EntityEffect.VILLAGER_HAPPY);
-        } else if (isRing && !npc.isFamily(playerUUID, false) && isAdult) {
-            npc.bukkit().playEffect(EntityEffect.VILLAGER_ANGRY);
+            bukkit.playEffect(EntityEffect.VILLAGER_HAPPY);
+        } else if (isRing && !npc.isFamily(player, false) && isAdult) {
+            bukkit.playEffect(EntityEffect.VILLAGER_ANGRY);
 
             Messages.Message message;
             if (npc.hasPartner()) {
@@ -328,8 +336,13 @@ public final class ExpectingManager implements Listener {
             return;
         }
 
+        // Stop being annoyed after a good gift.
+        if (success && Config.ANNOYING_METER_CLEAR_AFTER_SUCCESS_INTERACTION.asBool()) {
+            plugin.getAnnoyingManager().stopBeingAnnoyed(player, npc);
+        }
+
         if (successByCross || (success && isCross)) {
-            // For cross, just use a random category.
+            // For cross, use a random category.
             GiftCategory randomCategory = plugin.getGiftManager().getRandomCategory();
             if (randomCategory != null) messages.sendRandomGiftMessage(player, npc, randomCategory);
             return;
@@ -346,8 +359,8 @@ public final class ExpectingManager implements Listener {
 
         messages.sendRandomGiftMessage(player, npc, category);
 
-        ItemStackUtils.setBetterWeaponInMaindHand(npc.bukkit(), gift);
-        ItemStackUtils.setArmorItem(npc.bukkit(), gift);
+        ItemStackUtils.setBetterWeaponInMaindHand(bukkit, gift);
+        ItemStackUtils.setArmorItem(bukkit, gift);
     }
 
     private void dropRing(@NotNull IVillagerNPC npc, ItemStack gift) {
@@ -372,5 +385,25 @@ public final class ExpectingManager implements Listener {
 
     public void remove(UUID uuid) {
         villagerExpectingCache.remove(uuid);
+    }
+
+    public GiftMode getGiftModeFromConfig() {
+        return PluginUtils.getOrDefault(
+                GiftMode.class,
+                Config.GIFT_MODE.asString("DROP"),
+                GiftMode.DROP);
+    }
+
+    public enum GiftMode {
+        DROP,
+        RIGHT_CLICK;
+
+        public boolean drop() {
+            return this == DROP;
+        }
+
+        public boolean rightClick() {
+            return this == RIGHT_CLICK;
+        }
     }
 }

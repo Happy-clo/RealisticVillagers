@@ -7,7 +7,6 @@ import me.matsubara.realisticvillagers.files.Config;
 import me.matsubara.realisticvillagers.files.Messages;
 import me.matsubara.realisticvillagers.gui.InteractGUI;
 import me.matsubara.realisticvillagers.gui.types.SkinGUI;
-import me.matsubara.realisticvillagers.manager.NametagManager;
 import me.matsubara.realisticvillagers.manager.revive.MonumentAnimation;
 import me.matsubara.realisticvillagers.manager.revive.ReviveManager;
 import me.matsubara.realisticvillagers.nms.INMSConverter;
@@ -23,9 +22,9 @@ import org.bukkit.command.*;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.AbstractHorse;
+import org.bukkit.entity.AbstractVillager;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.Villager;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.inventory.ItemStack;
@@ -91,7 +90,7 @@ public class MainCommand implements CommandExecutor, TabCompleter {
 
         String subCommand;
         boolean noArgs = args.length == 0;
-        if (noArgs || args.length > 5 || !COMMAND_ARGS.contains((subCommand = args[0]).toLowerCase())) {
+        if (noArgs || args.length > 5 || !COMMAND_ARGS.contains((subCommand = args[0]).toLowerCase(Locale.ROOT))) {
             if (noArgs) HELP.forEach(sender::sendMessage);
             else messages.send(sender, Messages.Message.INVALID_COMMAND);
             return true;
@@ -159,7 +158,7 @@ public class MainCommand implements CommandExecutor, TabCompleter {
             String sex = getSex(sender, args.length > 1 ? args[1] : "male");
             if (sex == null) return true;
 
-            String ageStage = getAgeStage(sender, args.length > 2 ? args[2].toLowerCase() : "adult");
+            String ageStage = getAgeStage(sender, args.length > 2 ? args[2].toLowerCase(Locale.ROOT) : "adult");
             if (ageStage == null) return true;
 
             boolean isAdult = ageStage.equals("adult");
@@ -203,7 +202,6 @@ public class MainCommand implements CommandExecutor, TabCompleter {
         boolean nametagsDisabled = Config.DISABLE_NAMETAGS.asBool();
         boolean reviveEnabled = Config.REVIVE_ENABLED.asBool();
         boolean tameHorsesEnabled = Config.TAME_HORSES.asBool();
-        boolean customNameBlockEnabled = Config.CUSTOM_NAME_SHOW_JOB_BLOCK.asBool();
 
         messages.send(sender, Messages.Message.RELOADING);
 
@@ -261,16 +259,10 @@ public class MainCommand implements CommandExecutor, TabCompleter {
                         }
                     });
 
-            NametagManager nametagManager = plugin.getNametagManager();
-
             handleChangedOption(
                     nametagsDisabled,
                     Config.DISABLE_NAMETAGS.asBool(),
                     (npc, state) -> {
-                        if (nametagManager != null && state) {
-                            nametagManager.remove(npc);
-                        }
-
                         // Only disable nametags if skins are enabled.
                         LivingEntity bukkit = npc.bukkit();
                         if (!tracker.isInvalid(bukkit)) tracker.refreshNPCSkin(bukkit, false);
@@ -285,15 +277,10 @@ public class MainCommand implements CommandExecutor, TabCompleter {
                         }
                     });
 
-            handleChangedOption(false, true, (npc, state) -> {
-                if (nametagManager == null) return;
-                nametagManager.resetNametag(npc);
-            });
+            // Update nametag from config.
+            handleChangedOption(false, true, (npc, state) -> plugin.getTracker().getNPC(npc.bukkit().getEntityId())
+                    .ifPresent(temp -> temp.getSeeingPlayers().forEach(temp::refreshNametags)));
 
-            // Register or unregister listeners depending on the status.
-            if (nametagManager != null) {
-                handleListeners(customNameBlockEnabled, Config.CUSTOM_NAME_SHOW_JOB_BLOCK.asBool(), nametagManager);
-            }
             handleListeners(reviveEnabled, Config.REVIVE_ENABLED.asBool(), reviveManager);
         }));
         return true;
@@ -316,7 +303,7 @@ public class MainCommand implements CommandExecutor, TabCompleter {
     }
 
     private @Nullable String getValidString(CommandSender sender, @NotNull String string, @NotNull List<String> from, Messages.Message notFound) {
-        String wanted = string.toLowerCase();
+        String wanted = string.toLowerCase(Locale.ROOT);
         if (from.contains(wanted)) return wanted;
 
         plugin.getMessages().send(sender, notFound);
@@ -426,7 +413,7 @@ public class MainCommand implements CommandExecutor, TabCompleter {
 
         if (args.length == 2) {
             // These require the sex list.
-            if (SEX_USERS.contains(args[0].toLowerCase())) {
+            if (SEX_USERS.contains(args[0].toLowerCase(Locale.ROOT))) {
                 return StringUtil.copyPartialMatches(args[1], SEX_LIST, new ArrayList<>());
             }
             // give_(item) & force-divorce require a player, so null will give a list with online players; empty list for reload or unknown subcommand.
@@ -434,12 +421,12 @@ public class MainCommand implements CommandExecutor, TabCompleter {
         }
 
         // rv set-skin <sex> <id>
-        if (args.length == 3 && args[0].equalsIgnoreCase("set-skin") && SEX_LIST.contains(args[1].toLowerCase())) {
+        if (args.length == 3 && args[0].equalsIgnoreCase("set-skin") && SEX_LIST.contains(args[1].toLowerCase(Locale.ROOT))) {
             return StringUtil.copyPartialMatches(args[2], SKIN_ID_ARGS, new ArrayList<>());
         }
 
         // rv add-skin <sex> <age-stage> | rv skins (sex) (age-stage)
-        if (args.length == 3 && AGE_STAGE_USERS.contains(args[0]) && SEX_LIST.contains(args[1].toLowerCase())) {
+        if (args.length == 3 && AGE_STAGE_USERS.contains(args[0]) && SEX_LIST.contains(args[1].toLowerCase(Locale.ROOT))) {
             return StringUtil.copyPartialMatches(args[2], AGE_STAGE_LIST, new ArrayList<>());
         }
 
@@ -447,8 +434,8 @@ public class MainCommand implements CommandExecutor, TabCompleter {
         String sex, ageStage;
         if (args.length == 4
                 && args[0].equalsIgnoreCase("skins")
-                && SEX_LIST.contains((sex = args[1].toLowerCase()))
-                && AGE_STAGE_LIST.contains((ageStage = args[2].toLowerCase()))) {
+                && SEX_LIST.contains((sex = args[1].toLowerCase(Locale.ROOT)))
+                && AGE_STAGE_LIST.contains((ageStage = args[2].toLowerCase(Locale.ROOT)))) {
             int pages = getAmountOfPages(sex, ageStage.equals("adult"));
             if (pages != -1) return StringUtil.copyPartialMatches(
                     args[3],
@@ -460,8 +447,8 @@ public class MainCommand implements CommandExecutor, TabCompleter {
         boolean isTexture;
         if (((isTexture = args.length == 4) || args.length == 5)
                 && args[0].equalsIgnoreCase("add-skin")
-                && SEX_LIST.contains(args[1].toLowerCase())
-                && AGE_STAGE_LIST.contains(args[2].toLowerCase())) {
+                && SEX_LIST.contains(args[1].toLowerCase(Locale.ROOT))
+                && AGE_STAGE_LIST.contains(args[2].toLowerCase(Locale.ROOT))) {
             return StringUtil.copyPartialMatches(args[isTexture ? 3 : 4], isTexture ? TEXTURE_ARGS : SIGNATURE_ARGS, new ArrayList<>());
         }
 
@@ -491,7 +478,7 @@ public class MainCommand implements CommandExecutor, TabCompleter {
         if (previous == current) return;
 
         for (World world : plugin.getServer().getWorlds()) {
-            for (Villager villager : world.getEntitiesByClass(Villager.class)) {
+            for (AbstractVillager villager : world.getEntitiesByClass(AbstractVillager.class)) {
                 plugin.getConverter().getNPC(villager).ifPresent(npc -> consumer.accept(npc, current));
             }
         }

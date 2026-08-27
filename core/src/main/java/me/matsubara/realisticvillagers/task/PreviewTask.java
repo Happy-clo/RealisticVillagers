@@ -1,9 +1,7 @@
 package me.matsubara.realisticvillagers.task;
 
-import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.protocol.player.TextureProperty;
 import com.github.retrooper.packetevents.protocol.player.UserProfile;
-import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMoveAndRotation;
 import io.github.retrooper.packetevents.util.SpigotReflectionUtil;
 import me.matsubara.realisticvillagers.RealisticVillagers;
 import me.matsubara.realisticvillagers.files.Config;
@@ -49,14 +47,16 @@ public class PreviewTask extends BukkitRunnable {
         this.player = player;
         this.seconds = Config.SKIN_PREVIEW_SECONDS.asInt();
 
-        plugin.getTracker().checkNametagTeam();
+        plugin.getTracker().checkNametagTeam(null);
 
         targetLocation = getPlayerTargetLocation(player);
 
         UserProfile profile = new UserProfile(UUID.randomUUID(), VillagerTracker.HIDE_NAMETAG_NAME);
         profile.setTextureProperties(List.of(textures));
 
-        this.npc = new NPC(profile,
+        this.npc = new NPC(
+                plugin,
+                profile,
                 (npc, seeing) -> {
                     npc.rotation().queueHeadRotation(targetLocation.getYaw()).send(seeing);
 
@@ -68,7 +68,7 @@ public class PreviewTask extends BukkitRunnable {
 
         this.yaw = targetLocation.getYaw();
 
-        npc.show(player, plugin, targetLocation);
+        npc.show(player, targetLocation);
 
         plugin.getTracker().getPreviews().put(player.getUniqueId(), this);
     }
@@ -76,7 +76,7 @@ public class PreviewTask extends BukkitRunnable {
     @Override
     public void run() {
         if (tick == seconds * 20 || !player.isValid()) {
-            npc.hide(player, plugin);
+            npc.hide(player);
             cancel();
             return;
         }
@@ -85,19 +85,7 @@ public class PreviewTask extends BukkitRunnable {
         targetLocation.setYaw(yaw = yaw(yaw + ROTATION_SPEED));
 
         npc.teleport().queueTeleport(targetLocation, false).send(player);
-        npc.rotation().queueHeadRotation(targetLocation.getYaw()).send(player);
-
-        WrapperPlayServerEntityRelativeMoveAndRotation wrapper = new WrapperPlayServerEntityRelativeMoveAndRotation(
-                npc.getEntityId(),
-                0.0d,
-                0.0d,
-                0.0d,
-                yaw,
-                targetLocation.getPitch(),
-                false);
-
-        Object channel = PacketEvents.getAPI().getPlayerManager().getChannel(player);
-        PacketEvents.getAPI().getProtocolManager().sendPacket(channel, wrapper);
+        npc.rotation().queueHeadRotation(yaw).send(player);
 
         boolean rainbow = Config.SKIN_PREVIEW_RAINBOW_MESSAGE.asBool();
         if (rainbow || tick % 20 == 0) {
@@ -121,7 +109,7 @@ public class PreviewTask extends BukkitRunnable {
     @Override
     public synchronized void cancel() throws IllegalStateException {
         super.cancel();
-        npc.hide(player, plugin);
+        npc.hide(player);
         plugin.getTracker().getPreviews().remove(player.getUniqueId());
         player.spigot().sendMessage(ChatMessageType.ACTION_BAR); // Clear message.
     }
